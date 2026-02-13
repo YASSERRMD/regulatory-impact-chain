@@ -1,0 +1,319 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// Multi-Tenant Support
+// ============================================
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  code      String   @unique
+  isActive  Boolean  @default(true)
+  settings  Json?    // Tenant-specific configuration
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  departments  Department[]
+  budgets      Budget[]
+  services     Service[]
+  kpis         KPI[]
+  regulations  Regulation[]
+  impactEdges  ImpactEdge[]
+  auditLogs    AuditLog[]
+  simulations  Simulation[]
+  riskScores   RiskScore[]
+}
+
+// ============================================
+// Core Entities
+// ============================================
+
+model Department {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  code        String
+  description String?
+  parentId    String?  // For hierarchical departments
+  metadata    Json?    // Additional department data
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  parent      Department?  @relation("DepartmentHierarchy", fields: [parentId], references: [id])
+  children    Department[] @relation("DepartmentHierarchy")
+  regulations Regulation[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([parentId])
+}
+
+model Budget {
+  id           String   @id @default(cuid())
+  tenantId     String
+  departmentId String?
+  name         String
+  code         String
+  amount       Float
+  currency     String   @default("USD")
+  fiscalYear   Int
+  category     String?  // Operational, Capital, etc.
+  metadata     Json?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([departmentId])
+}
+
+model Service {
+  id            String   @id @default(cuid())
+  tenantId      String
+  departmentId  String?
+  name          String
+  code          String
+  description   String?
+  serviceType   String?  // Internal, External, Shared
+  status        String   @default("Active") // Active, Deprecated, Planned
+  metadata      Json?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([departmentId])
+}
+
+model KPI {
+  id             String   @id @default(cuid())
+  tenantId       String
+  departmentId   String?
+  name           String
+  code           String
+  description    String?
+  unit           String?  // Percentage, Count, Currency, etc.
+  targetValue    Float?
+  currentValue   Float?
+  measurementFrequency String? @default("Monthly") // Daily, Weekly, Monthly, Quarterly
+  metadata       Json?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([departmentId])
+}
+
+// ============================================
+// Regulation Management
+// ============================================
+
+model Regulation {
+  id                   String   @id @default(cuid())
+  tenantId             String
+  departmentId         String?
+  name                 String
+  code                 String
+  description          String?
+  regulationType       String?  // Compliance, Policy, Standard, Law
+  effectiveDate        DateTime
+  expirationDate       DateTime?
+  status               String   @default("Draft") // Draft, Active, Superseded, Revoked
+  severity             String   @default("Medium") // Low, Medium, High, Critical
+  enforcementParams    Json?    // Enforcement parameters as JSON
+  metadata             Json?
+  version              Int      @default(1)
+  parentRegulationId   String?  // For regulation versioning
+  isActive             Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department       Department?  @relation(fields: [departmentId], references: [id])
+  parentRegulation Regulation?  @relation("RegulationVersioning", fields: [parentRegulationId], references: [id])
+  childRegulations Regulation[] @relation("RegulationVersioning")
+  impacts          RegulationImpact[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([departmentId])
+  @@index([status])
+  @@index([effectiveDate])
+}
+
+// ============================================
+// Dependency Graph - Impact Edges
+// ============================================
+
+enum EntityType {
+  DEPARTMENT
+  BUDGET
+  SERVICE
+  KPI
+  REGULATION
+}
+
+model ImpactEdge {
+  id             String     @id @default(cuid())
+  tenantId       String
+  sourceType     EntityType
+  sourceId       String
+  targetType     EntityType
+  targetId       String
+  impactWeight   Float      @default(1.0) // 0.0 to 1.0
+  impactType     String     @default("Direct") // Direct, Indirect, Conditional
+  impactCategory String?    // Financial, Operational, Compliance, etc.
+  description    String?
+  conditions     Json?      // Conditional logic for impact
+  metadata       Json?
+  isActive       Boolean    @default(true)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, sourceType, sourceId, targetType, targetId])
+  @@index([tenantId])
+  @@index([sourceType, sourceId])
+  @@index([targetType, targetId])
+}
+
+// ============================================
+// Regulation Impact Tracking
+// ============================================
+
+model RegulationImpact {
+  id             String   @id @default(cuid())
+  regulationId   String
+  targetType     EntityType
+  targetId       String
+  impactScore    Float    // Calculated impact score
+  impactLevel    String   // Low, Medium, High, Critical
+  impactPath     Json?    // JSON array of the propagation path
+  propagatedAt   DateTime @default(now())
+  metadata       Json?
+
+  regulation Regulation @relation(fields: [regulationId], references: [id], onDelete: Cascade)
+
+  @@index([regulationId])
+  @@index([targetType, targetId])
+}
+
+// ============================================
+// Simulation & Timeline
+// ============================================
+
+model Simulation {
+  id              String   @id @default(cuid())
+  tenantId        String
+  regulationId    String?
+  name            String
+  description     String?
+  simulationType  String   @default("WhatIf") // WhatIf, Timeline, Comparison
+  baselineDate    DateTime
+  targetDate      DateTime?
+  parameters      Json?    // Simulation parameters
+  results         Json?    // Simulation results
+  status          String   @default("Pending") // Pending, Running, Completed, Failed
+  completedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([regulationId])
+  @@index([status])
+}
+
+// ============================================
+// Risk Index Calculation
+// ============================================
+
+model RiskScore {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  entityType         EntityType
+  entityId           String
+  regulationId       String?
+  baseRiskScore      Float    @default(0.0)
+  adjustedRiskScore  Float    @default(0.0)
+  riskLevel          String   @default("Low") // Low, Medium, High, Critical
+  riskFactors        Json?    // Detailed risk factor breakdown
+  calculatedAt       DateTime @default(now())
+  validUntil         DateTime?
+  metadata           Json?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, entityType, entityId, regulationId])
+  @@index([tenantId])
+  @@index([entityType, entityId])
+  @@index([regulationId])
+}
+
+// ============================================
+// Audit Log
+// ============================================
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  tenantId     String
+  entityType   String
+  entityId     String?
+  action       String   // CREATE, UPDATE, DELETE, PROPAGATE, SIMULATE, etc.
+  userId       String?
+  userName     String?
+  oldValues    Json?
+  newValues    Json?
+  changes      Json?    // Detailed change description
+  ipAddress    String?
+  userAgent    String?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+// ============================================
+// Cache Management
+// ============================================
+
+model CachedGraph {
+  id           String   @id @default(cuid())
+  tenantId     String   @unique
+  graphData    Json     // Cached dependency graph
+  version      Int      @default(1)
+  computedAt   DateTime @default(now())
+  expiresAt    DateTime?
+  isValid      Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
