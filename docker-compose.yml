@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  # Main Next.js Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=file:/app/db/production.db
+    volumes:
+      - db-data:/app/db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/tenants"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Socket.io Service
+  socket-service:
+    image: oven/bun:1
+    working_dir: /app
+    volumes:
+      - ./mini-services/regulation-service:/app
+    ports:
+      - "3003:3003"
+    command: ["bun", "run", "dev"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  db-data:
+    driver: local
